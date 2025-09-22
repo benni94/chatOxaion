@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Crawler / data outputs
+data/docs/
+data/faiss.index
+data/meta.pkl
+*.db.backup_*
+
+# Playwright browser binaries
+ms-playwright/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Python IDE / Editor files
+.vscode/
+.idea/
+*.sub*
