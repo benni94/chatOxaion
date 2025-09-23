@@ -1,41 +1,54 @@
-import subprocess
+import os
 import sys
+import subprocess
+import venv
 
-# List of required Python packages
-packages = [
-    "crawl4ai",
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VENV_DIR = os.path.join(BASE_DIR, "venv")
+CRAWL4AI_DIR = os.path.join(BASE_DIR, "crawl4ai")
+
+def run(cmd, cwd=None):
+    print(f"➡️  {' '.join(cmd)}")
+    subprocess.check_call(cmd, cwd=cwd)
+
+def pip_exec():
+    if sys.platform == "win32":
+        return os.path.join(VENV_DIR, "Scripts", "pip.exe")
+    return os.path.join(VENV_DIR, "bin", "pip")
+
+def python_exec():
+    if sys.platform == "win32":
+        return os.path.join(VENV_DIR, "Scripts", "python.exe")
+    return os.path.join(VENV_DIR, "bin", "python")
+
+# 1. Create venv if missing
+if not os.path.exists(VENV_DIR):
+    print("📦 Creating virtual environment...")
+    venv.create(VENV_DIR, with_pip=True)
+
+# 2. Upgrade pip
+run([pip_exec(), "install", "--upgrade", "pip"])
+
+# 3. Clone crawl4ai if missing
+if not os.path.exists(CRAWL4AI_DIR):
+    print("📥 Cloning crawl4ai repo...")
+    run(["git", "clone", "https://github.com/unclecode/crawl4ai.git", CRAWL4AI_DIR])
+
+# 4. Install required dependencies (skip madoka)
+requirements = [
     "playwright",
-    "sentence-transformers",
+    "beautifulsoup4",
     "faiss-cpu",
-    "beautifulsoup4"
+    "sentence-transformers",
+    "tqdm",
+    "gradio",
 ]
+for pkg in requirements:
+    run([pip_exec(), "install", pkg])
 
-def install_package(pkg):
-    """Install a Python package using pip."""
-    print(f"🔹 Installing {pkg}...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+# 5. Ensure playwright browsers are installed
+run([python_exec(), "-m", "playwright", "install", "chromium"])
 
-def check_and_install_packages(packages):
-    """Check and install all required packages."""
-    import importlib
-    for pkg in packages:
-        pkg_name = pkg.split("==")[0]  # remove version pin if exists
-        try:
-            importlib.import_module(pkg_name.replace("-", "_"))
-            print(f"✅ {pkg} already installed")
-        except ImportError:
-            install_package(pkg)
-
-def install_playwright_browsers():
-    """Install Playwright browsers."""
-    print("🌐 Installing Playwright browsers...")
-    subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
-
-def main():
-    print("🚀 Starting auto-installation of crawler dependencies...")
-    check_and_install_packages(packages)
-    install_playwright_browsers()
-    print("🎉 All dependencies installed successfully!")
-
-if __name__ == "__main__":
-    main()
+print("\n✅ Setup complete!")
+print(f"To use CLI: {python_exec()} query.py")
+print(f"To run GUI: {python_exec()} app.py")
