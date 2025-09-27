@@ -42,9 +42,27 @@ requirements = [
     "sentence-transformers",
     "tqdm",
     "gradio",
+    "aiohttp",
+    "aiosqlite",
+    "lxml",
+    "lark",
+    "python-dotenv",
+    "pyopenssl",
+    "cryptography",
+    "xxhash",
+    "psutil",
+    "rank_bm25",
+    "snowballstemmer",
+    "fake-useragent",
+    "tiktoken",
+    "chardet",
 ]
 for pkg in requirements:
     run([pip_exec(), "install", pkg])
+
+# 4b. Skip editable install of local crawl4ai to avoid noisy optional builds (e.g., madoka)
+# We import the local package via sys.path in crawler.py, so an installed wheel is not required.
+print("ℹ️  Skipping editable install of local crawl4ai (imports use sys.path).")
 
 # 5. Ensure playwright browsers are installed
 run([python_exec(), "-m", "playwright", "install", "chromium"])

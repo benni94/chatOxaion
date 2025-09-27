@@ -79,9 +79,12 @@ def build_index():
         if "_src_" in md_file.name:
             continue
         md_text = md_file.read_text(encoding="utf-8", errors="ignore")
+        # Extract original source URL if present in header comment: <!-- source: URL -->
+        m = re.search(r"<!--\s*source:\s*(.*?)\s*-->", md_text, flags=re.IGNORECASE)
+        source_url = m.group(1).strip() if m else None
         chunks = chunk_markdown(md_text)
         for title, content in chunks:
-            meta.append({"path": str(md_file), "title": title, "content": content})
+            meta.append({"path": str(md_file), "url": source_url, "title": title, "content": content})
             texts.append(f"{title}\n\n{content}")
 
     if not texts:
@@ -161,7 +164,7 @@ if __name__ == "__main__":
     print("\n📄 Results:")
     for item in results:
         title = item.get("title", "# Abschnitt")
-        path = item.get("path", "")
+        url = item.get("url") or item.get("path", "")
         content = item.get("content", "")
         snippet = content[:400].replace("\n", " ") + ("..." if len(content) > 400 else "")
-        print(f"- {title} — {path}\n  {snippet}")
+        print(f"- {title} — {url}\n  {snippet}")
