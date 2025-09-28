@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import gradio as gr
+from fastapi.responses import JSONResponse
 from urllib.parse import urlparse
 import re
 import requests
@@ -365,7 +366,8 @@ def build_ui():
 
         with gr.Row():
             t0 = TRANSLATIONS.get(lang_sel.value if hasattr(lang_sel, 'value') else 'de', TRANSLATIONS['en'])
-            use_ollama = gr.Checkbox(value=False, label=t0["use_ollama"])
+            # Enable Ollama by default
+            use_ollama = gr.Checkbox(value=True, label=t0["use_ollama"])
             # Initialize model list dynamically if server running
             _init_models = _ollama_list_models() if _ollama_server_up() else []
             _init_choices = _init_models if _init_models else OLLAMA_COMMON_MODELS
@@ -379,6 +381,23 @@ def build_ui():
                 scale=2,
             )
             top_k = gr.Slider(1, 8, value=4, step=1, label=t0["top_k"])
+
+        # Hint shown when Ollama generation is disabled
+        def _hint_text(lang, enabled):
+            """Return (text, visible) tuple for the LLM hint."""
+            if enabled:
+                return ("", False)
+            if lang == 'de':
+                msg = "ℹ️ Text-Chat nutzt Ollama zur Generierung. Aktivieren Sie die Option oben oder verwenden Sie den extraktiven Modus (ohne LLM)."
+            else:
+                msg = "ℹ️ Text chat uses Ollama for generation. Enable the toggle above or use extractive mode (without LLM)."
+            return (msg, True)
+
+        # Initialize hint based on default state
+        _init_lang = (lang_sel.value if hasattr(lang_sel, 'value') else 'de')
+        _init_enabled = (use_ollama.value if hasattr(use_ollama, 'value') else True)
+        _hint_text_val, _hint_visible = _hint_text(_init_lang, _init_enabled)
+        llm_hint = gr.Markdown(value=_hint_text_val, visible=_hint_visible)
 
         # Ollama setup/status panel (moved above chat)
         with gr.Accordion(t0["ollama_section"], open=False):
@@ -453,13 +472,20 @@ def build_ui():
                 return gr.update(value=t["pull_instr"].format(model=(model_name or "")))
             ollama_model.change(_on_model_change, inputs=[lang_sel, ollama_model], outputs=[instruction_md])
 
-        chatbot = gr.Chatbot(height=500, show_copy_button=True, type="messages", autoscroll=False, elem_id="chatbot")
+        # Wire hint toggle when user changes the checkbox
+        def _on_use_ollama_change(lang, enabled):
+            text, vis = _hint_text(lang, enabled)
+            return gr.update(value=text, visible=vis)
+        use_ollama.change(_on_use_ollama_change, inputs=[lang_sel, use_ollama], outputs=[llm_hint])
+
+        # Use OpenAI-style message dicts (future-proof per Gradio warning)
+        chatbot = gr.Chatbot(height=500, show_copy_button=True, autoscroll=False, elem_id="chatbot", type="messages")
         msg = gr.Textbox(placeholder=t0["placeholder"], autofocus=True)
         clear = gr.Button(t0["clear"])
 
         def respond(message, history, use_llm, model_name, k_val, lang):
             """Generator function to support streaming when using Ollama."""
-            history = history or []
+            history = history or []  # list of {role, content}
             k_val = int(k_val)
             model_name = str(model_name)
             lang = str(lang or 'en')
@@ -469,6 +495,13 @@ def build_ui():
 
             # If not using LLM, return extractive answer immediately
             if not use_llm:
+                if not results:
+                    answer = "No relevant sections found in the indexed docs."
+                    new_history = history + [
+                        {"role": "user", "content": message},
+                        {"role": "assistant", "content": answer},
+                    ]
+                    return new_history, gr.update(value="")
                 answer = extractive_answer(message, results)
                 sources_md = format_sources(results, lang=lang) if results else ""
                 new_history = history + [
@@ -494,6 +527,7 @@ def build_ui():
                 if not chunk:
                     continue
                 assistant_text += chunk
+                # Update last assistant message content
                 working_history[-1]["content"] = assistant_text
                 # Stream incremental updates
                 yield working_history, gr.update(value="")
@@ -504,73 +538,46 @@ def build_ui():
             working_history[-1]["content"] = assistant_text
             yield working_history, gr.update(value="")
 
-        # Client-side helper to scroll the Chatbot so the last user message is at the top
-        gr.HTML(
-            """
-            <script>
-            window.scrollToUserTop = function () {
-              try {
-                // Access inside gradio-app shadow DOM if present
-                const getRootDoc = () => {
-                  const ga = document.querySelector('gradio-app');
-                  return (ga && ga.shadowRoot) ? ga.shadowRoot : document;
-                };
-                const tryScroll = () => {
-                  const doc = getRootDoc();
-                  const root = doc.getElementById('chatbot');
-                  if (!root) return false;
-
-                  // Prefer Gradio v5 message structure
-                  let userMsgs = root.querySelectorAll('[data-testid="message"][data-source="user"], [data-testid="user"], .message.user');
-                  if (!userMsgs || userMsgs.length === 0) {
-                    userMsgs = root.querySelectorAll('[data-testid^="block-"], [data-testid^="message"], .message');
-                  }
-                  const last = userMsgs[userMsgs.length - 1];
-                  if (!last) return false;
-
-                  // Find the nearest scrollable container (Chatbot body)
-                  let container = root;
-                  const isScrollable = (el) => {
-                    if (!el) return false;
-                    const style = getComputedStyle(el);
-                    const overflowY = style.overflowY;
-                    return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
-                  };
-                  let parent = last.parentElement;
-                  while (parent && parent !== root) {
-                    if (isScrollable(parent)) { container = parent; break; }
-                    parent = parent.parentElement;
-                  }
-
-                  const cRect = container.getBoundingClientRect();
-                  const lRect = last.getBoundingClientRect();
-                  const delta = (lRect.top - cRect.top) + container.scrollTop;
-                  container.scrollTo({ top: delta, behavior: 'auto' });
-                  return true;
-                };
-
-                // Try a few times to handle async rendering
-                let attempts = 0;
-                const tick = () => {
-                  if (tryScroll()) return;
-                  if (++attempts < 10) requestAnimationFrame(tick);
-                };
-                setTimeout(tick, 50);
-              } catch (e) {
-                // Fail silently
-              }
-            };
-            </script>
-            """,
-            visible=False,
-        )
-
         _evt = msg.submit(
             respond,
             inputs=[msg, chatbot, use_ollama, ollama_model, top_k, lang_sel],
             outputs=[chatbot, msg],
         )
-        _evt.then(fn=None, inputs=None, outputs=None, js="scrollToUserTop")
+        _evt.then(
+            fn=None,
+            inputs=None,
+            outputs=None,
+            js="""
+            () => {
+              try {
+                const ga = document.querySelector('gradio-app');
+                const rootDoc = (ga && ga.shadowRoot) ? ga.shadowRoot : document;
+                const root = rootDoc.getElementById('chatbot');
+                if (!root) return;
+                // Find the last message and scroll container
+                let container = root;
+                const isScrollable = (el) => {
+                  if (!el) return false;
+                  const style = getComputedStyle(el);
+                  const overflowY = style.overflowY;
+                  return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+                };
+                const messages = root.querySelectorAll('[data-testid^="message"], .message');
+                const last = messages[messages.length - 1];
+                if (!last) return;
+                let parent = last.parentElement;
+                while (parent && parent !== root) {
+                  if (isScrollable(parent)) { container = parent; break; }
+                  parent = parent.parentElement;
+                }
+                const cRect = container.getBoundingClientRect();
+                const lRect = last.getBoundingClientRect();
+                const delta = (lRect.top - cRect.top) + container.scrollTop;
+                container.scrollTo({ top: delta, behavior: 'auto' });
+              } catch (e) {}
+            }
+            """,
+        )
         clear.click(lambda: ([], ""), inputs=None, outputs=[chatbot, msg])
 
 
@@ -592,6 +599,7 @@ def build_ui():
         # Language change handler updates labels/placeholders/header
         def _apply_lang(lang, model_name):
             t = TRANSLATIONS.get(lang, TRANSLATIONS['en'])
+            text, vis = _hint_text(lang, use_ollama.value if hasattr(use_ollama, 'value') else True)
             return (
                 gr.update(value=_header_text(lang)),
                 gr.update(label=t["use_ollama"]),
@@ -604,12 +612,28 @@ def build_ui():
                 gr.update(value=t["start_server"]),
                 gr.update(value=t["install_hint"]),
                 gr.update(value=t["pull_instr"].format(model=(model_name or ""))),
+                gr.update(value=text, visible=vis),
             )
 
         lang_sel.change(
             _apply_lang,
             inputs=[lang_sel, ollama_model],
-            outputs=[header_md, use_ollama, ollama_model, top_k, msg, clear, rebuild, refresh_btn, start_btn, hint_md, instruction_md],
+            outputs=[header_md, use_ollama, ollama_model, top_k, msg, clear, rebuild, refresh_btn, start_btn, hint_md, instruction_md, llm_hint],
+        )
+
+    # Serve a minimal web app manifest to satisfy frontend fetches
+    @demo.app.get("/manifest.json")
+    def _manifest():
+        return JSONResponse(
+            {
+                "name": "Oxaion Docs Assistant",
+                "short_name": "Oxaion",
+                "start_url": "/",
+                "display": "minimal-ui",
+                "background_color": "#ffffff",
+                "theme_color": "#ffffff",
+                "icons": [],
+            }
         )
 
     return demo

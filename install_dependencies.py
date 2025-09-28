@@ -56,6 +56,8 @@ requirements = [
     "fake-useragent",
     "tiktoken",
     "chardet",
+    "chromadb",
+    "requests",
 ]
 for pkg in requirements:
     run([pip_exec(), "install", pkg])
