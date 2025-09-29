@@ -63,3 +63,16 @@ The app starts at:
 - Sources in the GUI and CLI show the original documentation URLs, extracted from a header comment inserted into each markdown: `<!-- source: https://... -->`.
 - Retrieval uses multilingual embeddings, chunking by headings, cosine similarity, and cleaned markdown for higher quality matches.
 - To change the Ollama model, edit `app.py` or toggle in the UI.
+
+---
+## Direct Download (latest release)
+
+You can download the latest version of the chatbot from the GitHub releases page:
+
+https://github.com/benni94/chatOxaion/releases/latest
+
+After downloading the latest version, follow these steps:
+
+1. Place the `data.zip` file in the extracted folder.
+2. Double-click the `Install.command` file to install the chatbot.
+3. Once the installation is complete, double-click the `Start Chat.command` file to start the chatbot.
