@@ -21,7 +21,7 @@ data/docs/
 data/faiss.index
 data/meta.pkl
 *.db.backup_*
-data/chroma/
+data/*
 
 # Playwright browser binaries
 ms-playwright/
