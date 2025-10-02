@@ -18,7 +18,7 @@ case "$uname_out" in
     os="windows_msys";;
   *)
     os="unknown";;
- esac
+esac
 
 # Detect WSL
 if [ "$os" = "linux" ] && grep -qi 'microsoft' /proc/version 2>/dev/null; then
@@ -36,8 +36,16 @@ run_install_sh() {
 }
 
 case "$os" in
-  mac|linux|wsl|windows_msys)
+  mac|linux|wsl)
     run_install_sh
+    ;;
+  windows_msys)
+    if [ -f "start.cmd" ] && command -v cmd.exe >/dev/null 2>&1; then
+      exec cmd.exe /c start.cmd
+    else
+      echo "Windows (MSYS) detected, but start.cmd or cmd.exe not available. Please run start.cmd from Command Prompt (cmd.exe)." >&2
+      exit 1
+    fi
     ;;
   unknown)
     if [ -f "install.ps1" ] && command -v powershell.exe >/dev/null 2>&1; then
@@ -47,4 +55,4 @@ case "$os" in
       exit 1
     fi
     ;;
- esac
+esac

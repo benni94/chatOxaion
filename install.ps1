@@ -1,124 +1,82 @@
-#requires -Version 5.0
+#requires -Version 5.1
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Cross-platform (Windows/PowerShell) installer
-# - If data.zip exists: unzip concurrently with dependency install, wait for both, then start the app
-# - If data.zip does not exist: install deps, then run crawler, then start the app
+# Cross-platform Windows installer (PowerShell)
+# - Creates venv
+# - Runs install_dependencies.py (installs gradio, playwright, etc.)
+# - If data.zip exists: extract to ./data, normalize, build index
+# - Else: run crawler, then build index
+# - Finally: launch app.py
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $Root
-
-$dataZip = Join-Path $Root 'data.zip'
-$dataDir = Join-Path $Root 'data'
-$venvDir = Join-Path $Root 'venv'
-$venvPy  = Join-Path $venvDir 'Scripts\python.exe'
+$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ProjectDir
 
 function Find-Python {
-    if (Get-Command python3 -ErrorAction SilentlyContinue) { return 'python3' }
-    elseif (Get-Command python -ErrorAction SilentlyContinue) { return 'python' }
-    elseif (Get-Command py -ErrorAction SilentlyContinue) { return 'py' }
-    throw 'No Python interpreter found in PATH.'
+  try {
+    $v = & python -V 2>$null
+    if ($LASTEXITCODE -eq 0) { return 'python' }
+  } catch {}
+  try {
+    $v = & py -3 -V 2>$null
+    if ($LASTEXITCODE -eq 0) { return 'py -3' }
+  } catch {}
+  throw 'Python 3 not found in PATH. Please install Python 3 and try again.'
 }
 
-$python = Find-Python
+$PythonCmd = Find-Python
+$VenvDir   = Join-Path $ProjectDir 'venv'
+$VenvPy    = Join-Path $VenvDir 'Scripts\python.exe'
 
-function Unzip-Data {
-    param([string]$ZipPath, [string]$Dest)
-    if (-not (Test-Path $Dest)) { New-Item -ItemType Directory -Path $Dest | Out-Null }
-    if (Get-Command Expand-Archive -ErrorAction SilentlyContinue) {
-        Write-Host "📦 Unzipping data.zip to ./data (Expand-Archive)..."
-        Expand-Archive -Path $ZipPath -DestinationPath $Dest -Force
-    } else {
-        Write-Host "📦 Unzipping data.zip to ./data (python -m zipfile)..."
-        & $python -m zipfile -e $ZipPath $Dest
-    }
+# 1) Ensure venv
+if (-not (Test-Path $VenvPy)) {
+  Write-Host 'Creating virtual environment...'
+  & $PythonCmd -m venv $VenvDir
 }
 
-function Install-Deps {
-    Write-Host "🧰 Installing dependencies (install_dependencies.py)..."
-    & $python install_dependencies.py
-}
+# 2) Upgrade pip via venv
+& $VenvPy -m pip install --upgrade pip
+
+# 3) Install deps using the shared installer
+Write-Host 'Installing dependencies (install_dependencies.py)...'
+& $VenvPy "$ProjectDir\install_dependencies.py"
+
+# 4) Data handling
+$DataZip = Join-Path $ProjectDir 'data.zip'
+$DataDir = Join-Path $ProjectDir 'data'
 
 function Normalize-DataLayout {
-    # If archive extracted into data/data/*, move contents up one level
-    $nested = Join-Path $dataDir 'data'
-    if (Test-Path $nested) {
-        Write-Host "🧹 Normalizing extracted layout (flattening nested data/)..."
-        Get-ChildItem -Force -Path $nested | ForEach-Object {
-            Move-Item -Force -Path $_.FullName -Destination $dataDir
-        }
-        Remove-Item -Force -Recurse $nested
+  $Nested = Join-Path $DataDir 'data'
+  if (Test-Path $Nested) {
+    Write-Host 'Normalizing extracted layout (flattening nested data/)...'
+    if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
+    Get-ChildItem -Force -Path $Nested | ForEach-Object {
+      Move-Item -Force -Path $_.FullName -Destination $DataDir
     }
-    $docs = Join-Path $dataDir 'docs'
-    if (-not (Test-Path $docs)) { New-Item -ItemType Directory -Path $docs | Out-Null }
+    Remove-Item -Recurse -Force $Nested -ErrorAction SilentlyContinue
+  }
+  if (-not (Test-Path (Join-Path $DataDir 'docs'))) { New-Item -ItemType Directory -Path (Join-Path $DataDir 'docs') | Out-Null }
 }
 
-function Build-ChromaIndex {
-    Write-Host "🧱 Building ChromaDB index from ./data/docs..."
-    $pyToUse = if (Test-Path $venvPy) { $venvPy } else { $python }
-    $code = @'
-import query
-query.build_index()
-'@
-    & $pyToUse - << $code
-}
-
-function Run-Crawler {
-    Write-Host "🕷️  Running crawler (no data.zip present)..."
-    $pyToUse = if (Test-Path $venvPy) { $venvPy } else { $python }
-    & $pyToUse crawler.py
-}
-
-function Start-App {
-    Write-Host "🚀 Launching start.cmd..."
-    $startCmd = Join-Path $Root 'start.cmd'
-    $startCommandFile = Join-Path $Root 'Start Chat.command'
-    if (Test-Path $startCmd) {
-        Start-Process -FilePath cmd.exe -ArgumentList '/c', 'start.cmd' -WorkingDirectory $Root -WindowStyle Normal
-    } elseif (Test-Path $startCommandFile) {
-        # Fallback: attempt to run the .command via bash if available (Git Bash)
-        if (Get-Command bash -ErrorAction SilentlyContinue) {
-            Start-Process -FilePath bash -ArgumentList '"Start Chat.command"' -WorkingDirectory $Root -WindowStyle Normal
-        } else {
-            Write-Warning 'No start.cmd found and bash is unavailable to run Start Chat.command. Start the app manually.'
-        }
-    } else {
-        Write-Warning 'No start script found (start.cmd / Start Chat.command).'
-    }
-}
-
-if (Test-Path $dataZip) {
-    Write-Host 'Found data.zip. Unzipping and installing in parallel...'
-    $jobUnzip = Start-Job -ScriptBlock {
-        param($zip, $dest, $py)
-        $ErrorActionPreference = 'Stop'
-        if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
-        if (Get-Command Expand-Archive -ErrorAction SilentlyContinue) {
-            Expand-Archive -Path $zip -DestinationPath $dest -Force
-        } else {
-            & $py -m zipfile -e $zip $dest
-        }
-    } -ArgumentList $dataZip, $dataDir, $python
-
-    $jobInstall = Start-Job -ScriptBlock {
-        param($py)
-        $ErrorActionPreference = 'Stop'
-        & $py install_dependencies.py
-    } -ArgumentList $python
-
-    Wait-Job -Job $jobUnzip, $jobInstall | Out-Null
-    Receive-Job -Job $jobUnzip | Out-Null
-    Receive-Job -Job $jobInstall | Out-Null
-
-    Write-Host '✅ Data unzip and dependency install complete.'
-    Normalize-DataLayout
-    Build-ChromaIndex
-    Start-App
+if (Test-Path $DataZip) {
+  Write-Host 'Extracting data.zip to ./data ...'
+  if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
+  try {
+    Expand-Archive -Path $DataZip -DestinationPath $DataDir -Force
+  } catch {
+    Write-Warning "Expand-Archive failed. Falling back to Python unzip. $_"
+    & $VenvPy -m zipfile -e $DataZip $DataDir
+  }
+  Normalize-DataLayout
 } else {
-    Write-Host 'No data.zip found. Installing dependencies, then running crawler...'
-    Install-Deps
-    Run-Crawler
-    Build-ChromaIndex
-    Start-App
+  Write-Host 'No data.zip found. Running crawler...'
+  & $VenvPy "$ProjectDir\crawler.py"
 }
+
+# 5) Build index
+Write-Host 'Building ChromaDB index from ./data/docs ...'
+& $VenvPy -c "import query; query.build_index()"
+
+# 6) Launch app
+Write-Host 'Launching app.py ...'
+& $VenvPy "$ProjectDir\app.py"
