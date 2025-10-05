@@ -15,6 +15,7 @@ build/
 dist/
 *.egg-info/
 *.egg
+*.spec
 
 # Crawler / data outputs
 data/docs/
@@ -38,3 +39,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.sub*
+
+# Vendor repo (ignored)
+crawl4ai/
+crawl4ai/.git/

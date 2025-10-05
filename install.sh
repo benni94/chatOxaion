@@ -81,10 +81,13 @@ run_crawler() {
 }
 
 start_app() {
-  echo "🚀 Launching Start Chat.command..."
-  chmod +x "Start Chat.command" || true
-  # Use bash to ensure it runs on Linux as well
-  exec bash "Start Chat.command"
+  echo "🚀 Launching app.py (Gradio UI)..."
+  # Prefer venv python if available
+  if [ -x "$VENV_DIR/bin/python" ]; then
+    exec "$VENV_DIR/bin/python" app.py
+  else
+    exec "$PYTHON_CMD" app.py
+  fi
 }
 
 if [ -f "$DATA_ZIP" ]; then
